@@ -1,5 +1,6 @@
 streamlit
 openai
 pymupdf
-langchain
-faiss-cpu
+scikit-learn
+requests
+
