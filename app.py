@@ -1,14 +1,17 @@
+from openai import OpenAI
 import streamlit as st
-import os
-import re
-import time
-import fitz  # PyMuPDF
-import requests
 
-os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
-from transformers import pipeline
-from sklearn.feature_extraction.text import TfidfVectorizer
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
+def summarize(text):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Summarize academic text clearly"},
+            {"role": "user", "content": text}
+        ]
+    )
+    return response.choices[0].message.content
 # ===============================
 # PAGE CONFIG
 # ===============================
@@ -245,4 +248,5 @@ with tab3:
                 st.markdown(f"[Read Paper]({link})")
 
 # ===============================
+
 st.caption("🚀 Built by Manikandan S | AI Research Paper Assistant")
