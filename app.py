@@ -40,10 +40,16 @@ div[data-baseweb="tab-panel"] {
 # ===============================
 # LOAD AI MODEL (ONCE)
 # ===============================
+from transformers import pipeline
+import streamlit as st
+
 @st.cache_resource
 def load_summarizer():
-    return pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-
+    return pipeline(
+        "summarization",
+        model="facebook/bart-large-cnn",
+        device=-1  # force CPU
+    )
 summarizer = load_summarizer()
 
 # ===============================
@@ -250,3 +256,4 @@ with tab3:
 # ===============================
 
 st.caption("🚀 Built by Manikandan S | AI Research Paper Assistant")
+
