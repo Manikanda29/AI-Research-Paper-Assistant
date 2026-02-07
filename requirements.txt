@@ -1,5 +1,5 @@
 streamlit
-transformers
-torch
-scikit-learn
-PyMuPDF
+openai
+pymupdf
+langchain
+faiss-cpu
