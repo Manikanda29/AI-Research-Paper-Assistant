@@ -1,24 +1,32 @@
-from openai import OpenAI
 import streamlit as st
+import re, time, fitz, requests
+from sklearn.feature_extraction.text import TfidfVectorizer
+from openai import OpenAI
 
+# ===============================
+# OPENAI CLIENT
+# ===============================
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-def summarize(text):
+def summarize(text, length):
+    max_tokens = {"Short": 120, "Medium": 220, "Long": 350}[length]
+
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Summarize academic text clearly"},
+            {"role": "system", "content": "Summarize academic research text clearly"},
             {"role": "user", "content": text}
-        ]
+        ],
+        max_tokens=max_tokens
     )
     return response.choices[0].message.content
+
+
 # ===============================
 # PAGE CONFIG
 # ===============================
-st.set_page_config(
-    page_title="AI Research Paper Assistant",
-    layout="wide"
-)
+st.set_page_config(page_title="AI Research Paper Assistant", layout="wide")
+
 st.markdown("""
 <style>
 button[data-baseweb="tab"] {
@@ -26,31 +34,10 @@ button[data-baseweb="tab"] {
     font-size: 14px !important;
     height: 40px !important;
 }
-
-div[data-baseweb="tab-list"] {
-    gap: 6px;
-}
-
-div[data-baseweb="tab-panel"] {
-    padding-top: 10px;
-}
+div[data-baseweb="tab-list"] { gap: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ===============================
-# LOAD AI MODEL (ONCE)
-# ===============================
-from transformers import pipeline
-import streamlit as st
-
-@st.cache_resource
-def load_summarizer():
-    return pipeline(
-        "summarization",
-        model="facebook/bart-large-cnn",
-        device=-1  # force CPU
-    )
-summarizer = load_summarizer()
 
 # ===============================
 # UTIL FUNCTIONS
@@ -60,21 +47,18 @@ def clean_text(text):
 
 def extract_text_from_pdf(uploaded_pdf):
     doc = fitz.open(stream=uploaded_pdf.read(), filetype="pdf")
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    return text.strip()
+    return " ".join(page.get_text() for page in doc)
 
 def extract_keywords(text, top_n=8):
     vec = TfidfVectorizer(stop_words="english", max_features=top_n)
     vec.fit([text])
     return vec.get_feature_names_out()
 
-def predict_user_intent(keywords):
-    k = [x.lower() for x in keywords]
+def predict_user_intent(words):
+    k = [w.lower() for w in words]
     if any(x in k for x in ["survey", "review"]):
         return "📚 Survey / Review focused research"
-    if any(x in k for x in ["model", "network", "algorithm"]):
+    if any(x in k for x in ["model", "algorithm", "network"]):
         return "🧠 Model / Algorithm based research"
     if any(x in k for x in ["dataset", "experiment", "data"]):
         return "📊 Dataset / Experimental research"
@@ -82,178 +66,82 @@ def predict_user_intent(keywords):
 
 def typing_effect(text):
     box = st.empty()
-    output = ""
+    out = ""
     for ch in text:
-        output += ch
-        box.markdown(output)
+        out += ch
+        box.markdown(out)
         time.sleep(0.002)
+
 
 # ===============================
 # ARXIV SEARCH
 # ===============================
-def search_arxiv(query, max_results=50):
-    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={max_results}"
+def search_arxiv(query, max_results=10):
+    url = f"http://export.arxiv.org/api/query?search_query=all:{query}&max_results={max_results}"
     return requests.get(url).text
 
 def parse_arxiv(feed):
     papers = []
-    entries = feed.split("<entry>")
-    for entry in entries[1:]:
-        title = entry.split("<title>")[1].split("</title>")[0].strip()
-        link = entry.split("<id>")[1].split("</id>")[0].strip()
-        papers.append((title, link))
+    for entry in feed.split("<entry>")[1:]:
+        title = entry.split("<title>")[1].split("</title>")[0]
+        link = entry.split("<id>")[1].split("</id>")[0]
+        papers.append((title.strip(), link.strip()))
     return papers
 
-# ===============================
-# HERO SECTION
-# ===============================
-st.markdown("""
-<h1 style='text-align:center;'>🤖 AI Research Paper Assistant</h1>
-<p style='text-align:center;color:gray;'>
-Summarize • Discover • Search research papers intelligently
-</p>
-""", unsafe_allow_html=True)
 
 # ===============================
-# INPUT SECTION
+# UI
 # ===============================
-st.markdown("### 📄 Upload or Paste Research Content")
+st.markdown("<h1 style='text-align:center;'>🤖 AI Research Paper Assistant</h1>", unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("Upload PDF", type=["pdf"])
+text_input = extract_text_from_pdf(uploaded_file) if uploaded_file else ""
 
-text_input = ""
-if uploaded_file:
-    with st.spinner("Extracting text from PDF..."):
-        text_input = extract_text_from_pdf(uploaded_file)
-        st.success("PDF content extracted ✅")
+text_input = st.text_area("Or paste research text", value=text_input, height=180)
+ready = len(text_input.strip()) > 200
 
-text_input = st.text_area(
-    "Or paste research text",
-    value=text_input,
-    height=180,
-    placeholder="Paste abstract / introduction here..."
-)
+tab1, tab2, tab3 = st.tabs(["📝 Generate Summary", "📚 Suggest Papers", "🔍 Search Papers"])
 
-input_ready = len(text_input.strip()) > 50
-
-st.divider()
 
 # ===============================
-# TABS
-# ===============================
-tab1, tab2, tab3 = st.tabs([
-    "📝 Generate Summary",
-    "📚 Suggest Related Papers",
-    "🔍 Search Research Papers"
-])
-
-# ===============================
-# TAB 1 — SUMMARY
+# TAB 1
 # ===============================
 with tab1:
-    st.subheader("Generate AI Summary")
+    length = st.radio("Summary Length", ["Short", "Medium", "Long"], horizontal=True)
 
-    length = st.radio(
-        "Summary Length",
-        ["Short", "Medium", "Long"],
-        horizontal=True
-    )
+    if st.button("✨ Generate Summary", disabled=not ready):
+        content = clean_text(text_input)[:3000]
 
-    if st.button("✨ Generate Summary", disabled=not input_ready):
-        content = clean_text(text_input)
+        with st.spinner("AI summarizing..."):
+            summary = summarize(content, length)
 
-        if len(content) < 200:
-            st.error("Please upload a proper research PDF or paste more text (min 200 characters).")
-            st.stop()
-
-        content = content[:2000]
-
-        max_len = {"Short": 80, "Medium": 140, "Long": 220}[length]
-
-        with st.status("🤖 AI is analyzing the paper...", expanded=True) as status:
-            time.sleep(0.8)
-            st.write("📄 Reading content")
-            time.sleep(0.8)
-            st.write("🧠 Understanding context")
-            time.sleep(0.8)
-            st.write("✍️ Generating summary")
-
-            result = summarizer(
-                content,
-                max_length=max_len,
-                min_length=int(max_len * 0.4),
-                do_sample=False
-            )
-
-            status.update(label="✅ Summary generated", state="complete")
-
-        with st.expander("📄 View Summary", expanded=True):
-            typing_effect(result[0]["summary_text"])
+        typing_effect(summary)
 
         keywords = extract_keywords(content)
         st.info("🔑 Keywords: " + ", ".join(keywords))
         st.success(predict_user_intent(keywords))
 
+
 # ===============================
-# TAB 2 — RELATED PAPERS
+# TAB 2
 # ===============================
 with tab2:
-    st.subheader("AI Suggested Related Papers")
+    if st.button("📚 Suggest Related Papers", disabled=not ready):
+        keywords = extract_keywords(text_input)
+        feed = search_arxiv(" ".join(keywords[:3]))
+        for i, (t, l) in enumerate(parse_arxiv(feed), 1):
+            st.markdown(f"**{i}. {t}**  \n[Read Paper]({l})")
 
-    num_papers = st.number_input(
-        "Enter how many papers you want",
-        min_value=1,
-        max_value=50,
-        value=10,
-        step=1,
-        key="related_papers_input"
-    )
-
-    if st.button("📚 Suggest Papers", disabled=not input_ready):
-        with st.spinner("Finding related research papers..."):
-            content = clean_text(text_input)
-            keywords = extract_keywords(content)
-            query = " ".join(keywords[:3])
-
-            feed = search_arxiv(query)
-            papers = parse_arxiv(feed)
-
-            for i, (title, link) in enumerate(papers[:num_papers], 1):
-                with st.expander(f"{i}. {title}"):
-                    st.markdown(f"[📄 Read Paper]({link})")
 
 # ===============================
-# TAB 3 — SEARCH PAPERS
+# TAB 3
 # ===============================
 with tab3:
-    st.subheader("Search Research Papers")
-
-    num_papers = st.number_input(
-        "Enter how many papers you want",
-        min_value=1,
-        max_value=50,
-        value=10,
-        step=1,
-        key="search_papers_input"
-    )
-
-    query = st.text_input(
-        "Search research paper",
-        placeholder="e.g. smart autonomous drone"
-    )
-
+    query = st.text_input("Search topic")
     if query:
-        with st.spinner("Searching papers..."):
-            feed = search_arxiv(query, max_results=int(num_papers))
-            papers = parse_arxiv(feed)
+        feed = search_arxiv(query)
+        for i, (t, l) in enumerate(parse_arxiv(feed), 1):
+            st.markdown(f"**{i}. {t}**  \n[Read Paper]({l})")
 
-            st.info("AI Intent: " + predict_user_intent(query.split()))
-
-            for i, (title, link) in enumerate(papers, 1):
-                st.markdown(f"**{i}. {title}**")
-                st.markdown(f"[Read Paper]({link})")
-
-# ===============================
 
 st.caption("🚀 Built by Manikandan S | AI Research Paper Assistant")
-
